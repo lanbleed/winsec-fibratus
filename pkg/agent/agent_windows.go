@@ -80,7 +80,16 @@ func New(cfg Config, h Handlers) (*Agent, error) {
 		var err error
 		compileResult, err = engine.Compile()
 		if err != nil {
+			engine.Close()
+			_ = psnap.Close()
+			_ = hsnap.Close()
 			return nil, fmt.Errorf("agent: compile rules: %w", err)
+		}
+		if compileResult.NumberRules == 0 {
+			engine.Close()
+			_ = psnap.Close()
+			_ = hsnap.Close()
+			return nil, fmt.Errorf("agent: no Fibratus rules loaded from the configured path(s)")
 		}
 		// The host agent owns response actions (kill/isolate via its command
 		// channel). Strip rule-declared Fibratus actions now that the rules are

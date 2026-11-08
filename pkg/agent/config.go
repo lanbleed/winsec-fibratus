@@ -21,6 +21,9 @@ type Config struct {
 	// engine (capture + process state only).
 	RulesPath string
 
+	// RulesPaths overrides RulesPath with several globs (e.g. *.yml + *.yaml).
+	RulesPaths []string
+
 	// EnableThreadEvents, EnableRegistryEvents, ... control which kernel
 	// event classes are captured. All default to true in DefaultConfig.
 	EnableThreadEvents   bool
@@ -94,8 +97,12 @@ func (c Config) toFibratusConfig() *config.Config {
 	es.Init()
 
 	filters := &config.Filters{}
-	if c.RulesPath != "" {
-		filters.Rules = config.Rules{Enabled: true, FromPaths: []string{c.RulesPath}}
+	paths := c.RulesPaths
+	if len(paths) == 0 && c.RulesPath != "" {
+		paths = []string{c.RulesPath}
+	}
+	if len(paths) > 0 {
+		filters.Rules = config.Rules{Enabled: true, FromPaths: paths}
 	}
 
 	return &config.Config{

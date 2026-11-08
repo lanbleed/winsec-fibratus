@@ -90,6 +90,8 @@ type snapshotter struct {
 	createCallback         CreateCallback
 	destroyCallback        DestroyCallback
 	housekeepTick          *time.Ticker
+	quit                   chan struct{}
+	closeOnce              sync.Once
 	initSnap               bool
 	capture                bool
 }
@@ -104,6 +106,7 @@ func NewSnapshotter(config *config.Config, fn SnapshotBuildCompleted) Snapshotte
 		snapshotBuildCompleted: fn,
 		config:                 config,
 		housekeepTick:          time.NewTicker(time.Minute),
+		quit:                   make(chan struct{}),
 		initSnap:               config.InitHandleSnapshot,
 	}
 
@@ -336,7 +339,11 @@ func (s *snapshotter) consumeHandles() {
 
 func (s *snapshotter) housekeeping() {
 	for {
-		<-s.housekeepTick.C
+		select {
+		case <-s.quit:
+			return
+		case <-s.housekeepTick.C:
+		}
 
 		size := globalBufferSize
 		buf := make([]byte, size)
@@ -391,8 +398,11 @@ func (s *snapshotter) GetSnapshot() []htypes.Handle {
 }
 
 func (s *snapshotter) Close() error {
-	if s.housekeepTick != nil {
-		s.housekeepTick.Stop()
-	}
+	s.closeOnce.Do(func() {
+		close(s.quit)
+		if s.housekeepTick != nil {
+			s.housekeepTick.Stop()
+		}
+	})
 	return nil
 }

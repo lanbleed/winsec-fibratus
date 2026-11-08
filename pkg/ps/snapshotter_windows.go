@@ -102,14 +102,15 @@ type Snapshotter interface {
 }
 
 type snapshotter struct {
-	mu      sync.RWMutex
-	procs   map[uint32]*pstypes.PS
-	dirty   map[uint32]*pstypes.PS
-	dmu     sync.RWMutex
-	quit    chan struct{}
-	config  *config.Config
-	hsnap   handle.Snapshotter
-	capture bool
+	mu        sync.RWMutex
+	procs     map[uint32]*pstypes.PS
+	dirty     map[uint32]*pstypes.PS
+	dmu       sync.RWMutex
+	quit      chan struct{}
+	closeOnce sync.Once
+	config    *config.Config
+	hsnap     handle.Snapshotter
+	capture   bool
 }
 
 // NewSnapshotter returns a new instance of the process snapshotter.
@@ -415,7 +416,7 @@ func (s *snapshotter) RemoveMmap(pid uint32, addr va.Address) error {
 }
 
 func (s *snapshotter) Close() error {
-	s.quit <- struct{}{}
+	s.closeOnce.Do(func() { close(s.quit) })
 	return nil
 }
 
@@ -771,6 +772,7 @@ func (s *snapshotter) gcDeadProcesses() {
 			s.mu.Unlock()
 		case <-s.quit:
 			tick.Stop()
+			return
 		}
 	}
 }
