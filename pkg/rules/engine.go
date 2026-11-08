@@ -62,6 +62,8 @@ type Engine struct {
 	sequences []*sequenceState
 
 	scavenger *time.Ticker
+	stop      chan struct{}
+	closeOnce sync.Once
 
 	compiler *compiler
 
@@ -138,6 +140,7 @@ func NewEngine(psnap ps.Snapshotter, config *config.Config) *Engine {
 		psnap:     psnap,
 		config:    config,
 		scavenger: time.NewTicker(sequenceGcInterval),
+		stop:      make(chan struct{}),
 		compiler:  newCompiler(psnap, config),
 	}
 
@@ -158,11 +161,23 @@ func (e *Engine) ApproverPlan() *filter.ApproverPlan {
 
 func (e *Engine) gcSequences() {
 	for {
-		<-e.scavenger.C
-		for _, seq := range e.sequences {
-			seq.gc()
+		select {
+		case <-e.stop:
+			return
+		case <-e.scavenger.C:
+			for _, seq := range e.sequences {
+				seq.gc()
+			}
 		}
 	}
+}
+
+// Close stops the sequence scavenger. Safe to call more than once.
+func (e *Engine) Close() {
+	e.closeOnce.Do(func() {
+		close(e.stop)
+		e.scavenger.Stop()
+	})
 }
 
 // Compile loads macros/rules and builds an indexable filter set.

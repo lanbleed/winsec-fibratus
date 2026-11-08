@@ -9,9 +9,12 @@ import (
 	"sync"
 
 	"github.com/rabbitstack/fibratus/internal/etw"
+	"github.com/rabbitstack/fibratus/pkg/alertsender"
 	"github.com/rabbitstack/fibratus/pkg/config"
 	"github.com/rabbitstack/fibratus/pkg/event"
 	"github.com/rabbitstack/fibratus/pkg/fs"
+	"github.com/rabbitstack/fibratus/pkg/handle"
+	"github.com/rabbitstack/fibratus/pkg/ps"
 	"github.com/rabbitstack/fibratus/pkg/rules"
 	"github.com/rabbitstack/fibratus/pkg/source"
 	"github.com/rabbitstack/fibratus/pkg/util/signature"
@@ -35,8 +38,13 @@ type Agent struct {
 	h      Handlers
 	engine *rules.Engine
 	src    source.EventSource
+	psnap  ps.Snapshotter
+	hsnap  handle.Snapshotter
 	fcfg   *config.Config
 	once   sync.Once
+
+	ready     chan error
+	readyOnce sync.Once
 }
 
 // New validates the configuration and builds the engine/source. It does not
@@ -64,6 +72,7 @@ func New(cfg Config, h Handlers) (*Agent, error) {
 
 	psnap, hsnap := newSnapshotter(fcfg)
 
+	ensureNoopAlertSender()
 	var engine *rules.Engine
 	var compileResult *config.RulesCompileResult
 	if fcfg.Filters != nil && fcfg.Filters.Rules.Enabled {
@@ -73,32 +82,51 @@ func New(cfg Config, h Handlers) (*Agent, error) {
 		if err != nil {
 			return nil, fmt.Errorf("agent: compile rules: %w", err)
 		}
+		// The host agent owns response actions (kill/isolate via its command
+		// channel). Strip rule-declared Fibratus actions now that the rules are
+		// loaded, so the embedded engine can never execute them locally.
+		if fcfg.Filters != nil {
+			for _, f := range fcfg.GetFilters() {
+				f.Action = nil
+			}
+		}
 	}
 	if engine != nil && h.OnAlert != nil {
 		engine.RegisterMatchFunc(h.OnAlert)
 	}
 
 	src := etw.NewEventSource(psnap, hsnap, fcfg, compileResult)
-	return &Agent{cfg: cfg, h: h, engine: engine, src: src, fcfg: fcfg}, nil
+	return &Agent{cfg: cfg, h: h, engine: engine, src: src, psnap: psnap, hsnap: hsnap, fcfg: fcfg, ready: make(chan error, 1)}, nil
 }
 
 // Run starts the ETW capture and blocks until ctx is cancelled.
 func (a *Agent) Run(ctx context.Context) error {
 	if err := a.src.Open(a.fcfg); err != nil {
+		a.signalReady(err)
+		_ = a.close()
 		return fmt.Errorf("agent: open event source: %w", err)
 	}
+	a.signalReady(nil)
 	defer a.close()
 
 	go func() {
-		for err := range a.src.Errors() {
-			if err == nil {
-				continue
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case err, ok := <-a.src.Errors():
+				if !ok {
+					return
+				}
+				if err == nil {
+					continue
+				}
+				if a.h.OnError != nil {
+					a.h.OnError(err)
+					continue
+				}
+				log.WithError(err).Warn("agent: capture error")
 			}
-			if a.h.OnError != nil {
-				a.h.OnError(err)
-				continue
-			}
-			log.WithError(err).Warn("agent: capture error")
 		}
 	}()
 
@@ -130,13 +158,56 @@ func (a *Agent) Run(ctx context.Context) error {
 // Close stops the sensor. Safe to call more than once.
 func (a *Agent) Close() error { return a.close() }
 
+// WaitReady blocks until the capture source has opened (nil) or failed.
+func (a *Agent) WaitReady(ctx context.Context) error {
+	select {
+	case err := <-a.ready:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (a *Agent) signalReady(err error) {
+	a.readyOnce.Do(func() { a.ready <- err })
+}
+
 func (a *Agent) close() error {
 	var err error
 	a.once.Do(func() {
 		err = a.src.Close()
+		if a.engine != nil {
+			a.engine.Close()
+		}
+		if a.psnap != nil {
+			_ = a.psnap.Close()
+		}
+		if a.hsnap != nil {
+			_ = a.hsnap.Close()
+		}
 	})
 	if err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
+}
+
+// noopSender satisfies Fibratus' Alert action without sending anything. The
+// host agent gets alerts via RegisterMatchFunc, so Fibratus' own alert sender
+// must exist but must stay silent.
+type noopSender struct{}
+
+func (noopSender) Send(alertsender.Alert) error { return nil }
+func (noopSender) Type() alertsender.Type       { return alertsender.Noop }
+func (noopSender) Shutdown() error              { return nil }
+func (noopSender) SupportsMarkdown() bool       { return false }
+
+func ensureNoopAlertSender() {
+	if alertsender.Find(alertsender.Noop) != nil {
+		return
+	}
+	alertsender.Register(alertsender.Noop, func(alertsender.Config) (alertsender.Sender, error) {
+		return noopSender{}, nil
+	})
+	_ = alertsender.LoadAll([]alertsender.Config{{Type: alertsender.Noop}})
 }

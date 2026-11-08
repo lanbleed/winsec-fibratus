@@ -24,17 +24,13 @@ import (
 	"github.com/rabbitstack/fibratus/pkg/config"
 	"github.com/rabbitstack/fibratus/pkg/util/markdown"
 	log "github.com/sirupsen/logrus"
-	"strings"
 )
 
 // Alert sends the rule alert via all configured alert senders.
 func Alert(ctx *config.ActionContext, title string, text string, severity string, tags []string) error {
-	var b strings.Builder
-	for _, evt := range ctx.Events {
-		b.WriteString(evt.String())
-		b.WriteByte('\n')
-	}
-	log.Infof("sending alert: [%s]. Text: %s Event(s): %s", title, text, b.String())
+	// Never log the raw event/command line at Info: the host agent receives the
+	// alert through RegisterMatchFunc and ships it through its own redactor.
+	log.Debugf("sending alert: [%s]", title)
 
 	senders := alertsender.FindAll()
 	if len(senders) == 0 {
