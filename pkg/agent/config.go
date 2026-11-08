@@ -23,6 +23,11 @@ type Config struct {
 
 	// RulesPaths overrides RulesPath with several globs (e.g. *.yml + *.yaml).
 	RulesPaths []string
+	// MacrosPath is a Fibratus macro glob. Rules that reference macros fail to
+	// compile when it is empty.
+	MacrosPath string
+	// MacrosPaths overrides MacrosPath with several globs.
+	MacrosPaths []string
 
 	// EnableThreadEvents, EnableRegistryEvents, ... control which kernel
 	// event classes are captured. All default to true in DefaultConfig.
@@ -103,6 +108,13 @@ func (c Config) toFibratusConfig() *config.Config {
 	}
 	if len(paths) > 0 {
 		filters.Rules = config.Rules{Enabled: true, FromPaths: paths}
+	}
+	macroPaths := c.MacrosPaths
+	if len(macroPaths) == 0 && c.MacrosPath != "" {
+		macroPaths = []string{c.MacrosPath}
+	}
+	if len(macroPaths) > 0 {
+		filters.Macros = config.Macros{FromPaths: macroPaths}
 	}
 
 	return &config.Config{
