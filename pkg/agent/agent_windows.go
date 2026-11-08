@@ -34,14 +34,15 @@ type Handlers struct {
 
 // Agent is a running embedded Fibratus sensor.
 type Agent struct {
-	cfg    Config
-	h      Handlers
-	engine *rules.Engine
-	src    source.EventSource
-	psnap  ps.Snapshotter
-	hsnap  handle.Snapshotter
-	fcfg   *config.Config
-	once   sync.Once
+	cfg         Config
+	h           Handlers
+	engine      *rules.Engine
+	src         source.EventSource
+	psnap       ps.Snapshotter
+	hsnap       handle.Snapshotter
+	fcfg        *config.Config
+	once        sync.Once
+	rulesLoaded int
 
 	ready     chan error
 	readyOnce sync.Once
@@ -85,6 +86,7 @@ func New(cfg Config, h Handlers) (*Agent, error) {
 			_ = hsnap.Close()
 			return nil, fmt.Errorf("agent: compile rules: %w", err)
 		}
+		// stored on the Agent below; capture-only (no configured paths) stays 0.
 		if compileResult.NumberRules == 0 {
 			engine.Close()
 			_ = psnap.Close()
@@ -105,7 +107,11 @@ func New(cfg Config, h Handlers) (*Agent, error) {
 	}
 
 	src := etw.NewEventSource(psnap, hsnap, fcfg, compileResult)
-	return &Agent{cfg: cfg, h: h, engine: engine, src: src, psnap: psnap, hsnap: hsnap, fcfg: fcfg, ready: make(chan error, 1)}, nil
+	loaded := 0
+	if compileResult != nil {
+		loaded = compileResult.NumberRules
+	}
+	return &Agent{cfg: cfg, h: h, engine: engine, src: src, psnap: psnap, hsnap: hsnap, fcfg: fcfg, rulesLoaded: loaded, ready: make(chan error, 1)}, nil
 }
 
 // Run starts the ETW capture and blocks until ctx is cancelled.
@@ -168,6 +174,10 @@ func (a *Agent) Run(ctx context.Context) error {
 func (a *Agent) Close() error { return a.close() }
 
 // WaitReady blocks until the capture source has opened (nil) or failed.
+// RulesLoaded reports how many Fibratus rules the engine compiled (0 means
+// capture-only).
+func (a *Agent) RulesLoaded() int { return a.rulesLoaded }
+
 func (a *Agent) WaitReady(ctx context.Context) error {
 	select {
 	case err := <-a.ready:
