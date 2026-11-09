@@ -84,6 +84,12 @@ type compiledFilter struct {
 type filterset struct {
 	types      map[event.Type][]*compiledFilter
 	categories map[event.Category][]*compiledFilter
+	// sequences are evaluated for EVERY event, not just the event types the
+	// compile-result walker happened to extract from their stage expressions.
+	// A sequence's stage 1 is a state transition, not a plain filter lookup;
+	// indexing it only under one extracted type made a valid sequence invisible
+	// to the very event that should advance it.
+	sequences []*compiledFilter
 }
 
 func newFilterset() *filterset {
@@ -95,14 +101,14 @@ func newFilterset() *filterset {
 }
 
 func (f *filterset) empty() bool {
-	return len(f.types) == 0 && len(f.categories) == 0
+	return len(f.types) == 0 && len(f.categories) == 0 && len(f.sequences) == 0
 }
 
 func (f *filterset) collect(e *event.Event) []*compiledFilter {
-	if len(f.categories) == 0 {
-		return f.types[e.Type]
-	}
-	return append(f.types[e.Type], f.categories[e.Category()]...)
+	out := append([]*compiledFilter{}, f.types[e.Type]...)
+	out = append(out, f.categories[e.Category()]...)
+	out = append(out, f.sequences...)
+	return out
 }
 
 func newCompiledFilter(f filter.Filter, c *config.FilterConfig, ss *sequenceState) *compiledFilter {
@@ -200,6 +206,7 @@ func (e *Engine) Compile() (*config.RulesCompileResult, error) {
 			// store the sequences in engine
 			// for more convenient tracking
 			e.sequences = append(e.sequences, ss)
+			e.filters.sequences = append(e.filters.sequences, fltr)
 		}
 
 		if !fltr.isScoped() {
