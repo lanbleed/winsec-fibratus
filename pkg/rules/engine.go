@@ -285,7 +285,11 @@ func (e *Engine) ProcessEvent(evt *event.Event) (bool, error) {
 			continue
 		}
 		if f.isSequence() {
-			e.appendMatch(f.config, f.ss.events()...)
+			evts := f.ss.events()
+			if len(evts) == 0 {
+				evts = f.ss.partialEvents()
+			}
+			e.appendMatch(f.config, evts...)
 			f.ss.clearLocked()
 		} else {
 			e.appendMatch(f.config, evt)
