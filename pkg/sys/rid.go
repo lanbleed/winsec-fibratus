@@ -62,7 +62,13 @@ func RidToString(sid *windows.SID) string {
 	if sid == nil {
 		return "UNKNOWN"
 	}
-	switch sid.SubAuthority(uint32(sid.SubAuthorityCount() - 1)) {
+	count := sid.SubAuthorityCount()
+	// A DC/ETW event can carry a malformed or zero-sub-authority SID. Indexing
+	// with count-1 (or 0xff) panics the whole sensor; report UNKNOWN instead.
+	if count == 0 || count > 15 {
+		return "UNKNOWN"
+	}
+	switch sid.SubAuthority(uint32(count - 1)) {
 	case UntrustedRid:
 		return "UNTRUSTED"
 	case LowRid:
