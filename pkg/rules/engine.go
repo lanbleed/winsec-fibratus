@@ -285,14 +285,7 @@ func (e *Engine) ProcessEvent(evt *event.Event) (bool, error) {
 			continue
 		}
 		if f.isSequence() {
-			evts := f.ss.events()
-			if len(evts) == 0 {
-				// Terminal state may be reached without the optional join
-				// populating s.matches. Never emit an evidence-less sequence
-				// alert: the completing event is at least the trigger.
-				evts = []*event.Event{evt}
-			}
-			e.appendMatch(f.config, evts...)
+			e.appendMatch(f.config, f.ss.events()...)
 			f.ss.clearLocked()
 		} else {
 			e.appendMatch(f.config, evt)

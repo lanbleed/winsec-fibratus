@@ -156,21 +156,6 @@ func (s *sequenceState) events() []*event.Event {
 	return events
 }
 
-// partialEvents is the fallback evidence set when the terminal transition
-// fired but the constrained/unconstrained join did not populate matches. A
-// sequence alert without its contributing events is useless to the incident
-// view ("events=0"), so return the actual partials that formed the sequence.
-func (s *sequenceState) partialEvents() []*event.Event {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	events := make([]*event.Event, 0)
-	for _, evts := range s.partials {
-		events = append(events, evts...)
-	}
-	sort.Slice(events, func(i, j int) bool { return events[i].Timestamp.Before(events[j].Timestamp) })
-	return events
-}
-
 func (s *sequenceState) isStateSchedulable(state fsm.State) bool {
 	return state != s.initialState && state != sequenceTerminalState && state != sequenceExpiredState && state != sequenceDeadlineState
 }
