@@ -357,6 +357,14 @@ func (e *SequenceExpr) walk() {
 				}
 				e.types = append(e.types, typ)
 				e.eventBitmap.Set(typ)
+				// The kernel reports process creation through the internal
+				// provider on modern Windows. A sequence expression keyed on
+				// `spawn_process`/CreateProcess must also accept the internal
+				// variant, exactly like the plain filter path does.
+				if typ == event.CreateProcess {
+					e.types = append(e.types, event.CreateProcessInternal)
+					e.eventBitmap.Set(event.CreateProcessInternal)
+				}
 			case fields.EvtCategory:
 				category, ok := event.ParseCategory(v)
 				if !ok {
